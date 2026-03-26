@@ -1,14 +1,6 @@
 # Agent Wizards
 
-<p align="center">
-    <a href="https://github.com/khuongmaiuw/agent-wizards-v2"><img width="450" alt="Agent Wizards Logo" src="https://github.com/user-attachments/assets/cf8ca3ce-8b02-43f0-9d0f-5a331488da4b" /></a><br />
-    <a href="https://github.com/khuongmaiuw/agent-wizards-v2/releases"><img src="https://img.shields.io/github/release/khuongmaiuw/agent-wizards-v2" alt="Latest Release"></a>
-    <a href="https://github.com/khuongmaiuw/agent-wizards-v2/actions"><img src="https://github.com/khuongmaiuw/agent-wizards-v2/actions/workflows/build.yml/badge.svg" alt="Build Status"></a>
-</p>
-
 <p align="center">Your AI coding companion from UnicornWizard, now available in your favourite terminal.<br />Research, plan, and execute — wired into your LLM of choice.</p>
-
-<p align="center"><img width="800" alt="Agent Wizards Demo" src="https://github.com/user-attachments/assets/58280caf-851b-470a-b6f7-d5c4ea8a1968" /></p>
 
 ## Features
 
