@@ -366,6 +366,127 @@ func (app *App) UpdateAgentModel(ctx context.Context) error {
 	return app.AgentCoordinator.UpdateModels(ctx)
 }
 
+// RunPipelineNonInteractive runs the research→plan→code pipeline in non-interactive mode.
+func (app *App) RunPipelineNonInteractive(ctx context.Context, output io.Writer, prompt, largeModel, smallModel string, hideSpinner bool, continueSessionID string, useLast bool) error {
+	slog.Info("Running pipeline in non-interactive mode")
+
+	ctx, cancel := context.WithCancel(ctx)
+	defer cancel()
+
+	if largeModel != "" || smallModel != "" {
+		if err := app.overrideModelsForNonInteractive(ctx, largeModel, smallModel); err != nil {
+			return fmt.Errorf("failed to override models: %w", err)
+		}
+	}
+
+	var spinner *format.Spinner
+	if f, ok := output.(*os.File); ok {
+		stderrTTY := term.IsTerminal(os.Stderr.Fd())
+		stdinTTY := term.IsTerminal(os.Stdin.Fd())
+		stdoutTTY := term.IsTerminal(f.Fd())
+		progress := app.config.Config().Options.Progress == nil || *app.config.Config().Options.Progress
+		_ = progress
+		if !hideSpinner && stderrTTY {
+			t := styles.DefaultStyles()
+			hasDarkBG := true
+			if stdinTTY && stdoutTTY {
+				hasDarkBG = lipgloss.HasDarkBackground(os.Stdin, f)
+			}
+			defaultFG := lipgloss.LightDark(hasDarkBG)(charmtone.Pepper, t.FgBase)
+			spinner = format.NewSpinner(ctx, cancel, anim.Settings{
+				Size:        10,
+				Label:       "Planning",
+				LabelColor:  defaultFG,
+				GradColorA:  t.Primary,
+				GradColorB:  t.Secondary,
+				CycleColors: true,
+			})
+			spinner.Start()
+		}
+	}
+
+	stopSpinner := func() {
+		if !hideSpinner && spinner != nil {
+			spinner.Stop()
+			spinner = nil
+		}
+	}
+
+	if err := mcp.WaitForInit(ctx); err != nil {
+		return fmt.Errorf("failed to wait for MCP initialization: %w", err)
+	}
+	app.AgentCoordinator.UpdateModels(ctx)
+
+	defer stopSpinner()
+
+	sess, err := app.resolveSession(ctx, continueSessionID, useLast)
+	if err != nil {
+		return fmt.Errorf("failed to create session for pipeline mode: %w", err)
+	}
+	app.Permissions.AutoApproveSession(sess.ID)
+
+	type response struct {
+		result *fantasy.AgentResult
+		err    error
+	}
+	done := make(chan response, 1)
+
+	go func(ctx context.Context, sessionID, p string) {
+		result, err := app.AgentCoordinator.RunPipeline(ctx, sessionID, p)
+		if err != nil {
+			done <- response{err: fmt.Errorf("pipeline failed: %w", err)}
+			return
+		}
+		done <- response{result: result}
+	}(ctx, sess.ID, prompt)
+
+	messageEvents := app.Messages.Subscribe(ctx)
+	messageReadBytes := make(map[string]int)
+	var printed bool
+
+	defer func() {
+		_, _ = fmt.Fprintln(output)
+	}()
+
+	for {
+		select {
+		case result := <-done:
+			stopSpinner()
+			if result.err != nil {
+				if errors.Is(result.err, context.Canceled) || errors.Is(result.err, agent.ErrRequestCancelled) {
+					return nil
+				}
+				return result.err
+			}
+			return nil
+
+		case event := <-messageEvents:
+			msg := event.Payload
+			if msg.SessionID == sess.ID && msg.Role == message.Assistant && len(msg.Parts) > 0 {
+				stopSpinner()
+				content := msg.Content().String()
+				readBytes := messageReadBytes[msg.ID]
+				if len(content) < readBytes {
+					return fmt.Errorf("message content shorter than read bytes: %d < %d", len(content), readBytes)
+				}
+				part := content[readBytes:]
+				if readBytes == 0 {
+					part = strings.TrimLeft(part, " \t")
+				}
+				if printed || strings.TrimSpace(part) != "" {
+					printed = true
+					fmt.Fprint(output, part)
+				}
+				messageReadBytes[msg.ID] = len(content)
+			}
+
+		case <-ctx.Done():
+			stopSpinner()
+			return ctx.Err()
+		}
+	}
+}
+
 // overrideModelsForNonInteractive parses the model strings and temporarily
 // overrides the model configurations, then rebuilds the agent.
 // Format: "model-name" (searches all providers) or "provider/model-name".

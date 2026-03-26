@@ -499,54 +499,49 @@ func (s *Styles) DialogHelpStyles() help.Styles {
 
 // DefaultStyles returns the default styles for the UI.
 func DefaultStyles() Styles {
+	// UnicornWizard / Agent Wizards brand palette
+	// Primary: violet-purple, Secondary: gold/amber, Tertiary: cyan-teal
 	var (
-		primary   = charmtone.Charple
-		secondary = charmtone.Dolly
-		tertiary  = charmtone.Bok
-		// accent    = charmtone.Zest
+		primary   = lipgloss.Color("#9B59F6") // violet
+		secondary = lipgloss.Color("#F5C518") // gold
+		tertiary  = lipgloss.Color("#2DD4BF") // teal
 
-		// Backgrounds
-		bgBase        = charmtone.Pepper
-		bgBaseLighter = charmtone.BBQ
-		bgSubtle      = charmtone.Charcoal
-		bgOverlay     = charmtone.Iron
+		// Backgrounds — deep dark navy/charcoal
+		bgBase        = lipgloss.Color("#0D0D1A")
+		bgBaseLighter = lipgloss.Color("#16162E")
+		bgSubtle      = lipgloss.Color("#1E1E3F")
+		bgOverlay     = lipgloss.Color("#2A2A52")
 
 		// Foregrounds
-		fgBase      = charmtone.Ash
-		fgMuted     = charmtone.Squid
-		fgHalfMuted = charmtone.Smoke
-		fgSubtle    = charmtone.Oyster
-		// fgSelected  = charmtone.Salt
+		fgBase      = lipgloss.Color("#E8E8FF") // soft white-lavender
+		fgMuted     = lipgloss.Color("#7A7AB8") // muted purple-grey
+		fgHalfMuted = lipgloss.Color("#A0A0CC")
+		fgSubtle    = lipgloss.Color("#555588") // subtle
 
 		// Borders
-		border      = charmtone.Charcoal
-		borderFocus = charmtone.Charple
+		border      = lipgloss.Color("#2A2A52")
+		borderFocus = lipgloss.Color("#9B59F6") // violet
 
 		// Status
-		error   = charmtone.Sriracha
-		warning = charmtone.Zest
-		info    = charmtone.Malibu
+		error   = lipgloss.Color("#FF4D6D") // red-pink
+		warning = lipgloss.Color("#F5C518") // gold
+		info    = lipgloss.Color("#2DD4BF") // teal
 
 		// Colors
-		white = charmtone.Butter
+		white = lipgloss.Color("#FFFFFF")
 
-		blueLight = charmtone.Sardine
-		blue      = charmtone.Malibu
-		blueDark  = charmtone.Damson
+		blueLight = lipgloss.Color("#A5B4FC") // indigo-200
+		blue      = lipgloss.Color("#6082F8") // indigo
+		blueDark  = lipgloss.Color("#312E81") // indigo-900
 
-		// yellow = charmtone.Mustard
-		yellow = charmtone.Mustard
-		// citron = charmtone.Citron
+		yellow = lipgloss.Color("#F5C518") // gold
 
-		greenLight = charmtone.Bok
-		green      = charmtone.Julep
-		greenDark  = charmtone.Guac
-		// greenLight = charmtone.Bok
+		greenLight = lipgloss.Color("#6EE7B7") // emerald-300
+		green      = lipgloss.Color("#10B981") // emerald-500
+		greenDark  = lipgloss.Color("#065F46") // emerald-900
 
-		red     = charmtone.Coral
-		redDark = charmtone.Sriracha
-		// redLight = charmtone.Salmon
-		// cherry   = charmtone.Cherry
+		red     = lipgloss.Color("#FB7185") // rose-400
+		redDark = lipgloss.Color("#FF4D6D")
 	)
 
 	normalBorder := lipgloss.NormalBorder()
@@ -841,8 +836,10 @@ func DefaultStyles() Styles {
 	}
 
 	// PlainMarkdown style - muted colors on subtle background for thinking content.
-	plainBg := new(bgBaseLighter.Hex())
-	plainFg := new(fgMuted.Hex())
+	plainBgHex := "#16162E"
+	plainFgHex := "#7A7AB8"
+	plainBg := &plainBgHex
+	plainFg := &plainFgHex
 	s.PlainMarkdown = ansi.StyleConfig{
 		Document: ansi.StyleBlock{
 			StylePrimitive: ansi.StylePrimitive{

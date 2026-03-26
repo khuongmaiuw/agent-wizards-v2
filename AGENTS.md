@@ -2,171 +2,323 @@
 
 ## Project Overview
 
-Crush is a terminal-based AI coding assistant built in Go by
-[Charm](https://charm.land). It connects to LLMs and gives them tools to read,
-write, and execute code. It supports multiple providers (Anthropic, OpenAI,
-Gemini, Bedrock, Copilot, Hyper, MiniMax, Vercel, and more), integrates with
-LSPs for code intelligence, and supports extensibility via MCP servers and
-agent skills.
+Crush is a terminal-based AI coding assistant written in Go. The CLI entrypoint
+is `main.go`, which boots Cobra commands from `internal/cmd`. The app combines
+provider/model configuration, session persistence, tool execution, Bubble Tea
+UI, LSP integration, MCP integration, and SQLite-backed history.
 
-The module path is `github.com/charmbracelet/crush`.
+- Module path: `github.com/charmbracelet/crush`
+- Go version: `1.26.1` (`go.mod`)
+- Primary config/task runner: `Taskfile.yaml`
+- Main local config file used in this repo: `crush.json`
 
-## Architecture
+## Before You Change Anything
 
-```
-main.go                            CLI entry point (cobra via internal/cmd)
+- Read the nearest `AGENTS.md` before touching that area:
+  - Root guide: `AGENTS.md`
+  - TUI-specific guide: `internal/ui/AGENTS.md`
+  - Stats web assets: `internal/cmd/stats/AGENTS.md`
+- This repository has no `.cursor/rules`, `.cursorrules`, or Copilot instruction
+  files in the checked tree.
+- The codebase itself reads context files from the working directory:
+  `AGENTS.md`, `CRUSH.md`, `CLAUDE.md`, `GEMINI.md`, plus `.local` variants.
+
+## Essential Commands
+
+All commands below are observed from `Taskfile.yaml`, CI workflows, or project
+config.
+
+### Build and Run
+
+- Build binary: `task build`
+- Build directly: `go build .`
+- Build all packages with race detector in CI style: `go build -race ./...`
+- Run app after building: `task run`
+- Run directly: `go run .`
+- Run with profiling enabled: `task dev`
+- Install locally with version ldflags: `task install`
+
+### Tests
+
+- Full test suite: `task test`
+- Direct equivalent: `go test -race -failfast ./...`
+- Run a single package/test: `go test ./internal/config -run TestConfig_LoadFromBytes`
+- Re-record agent VCR cassettes: `task test:record`
+- Update golden/snapshot-style outputs when tests support it: `go test ./... -update`
+
+### Lint / Format / Modernize
+
+- Lint: `task lint`
+- Lint and auto-fix: `task lint:fix`
+- Log capitalization check only: `task lint:log`
+- Format Go: `task fmt`
+- Format stats HTML/CSS/JS: `task fmt:html`
+- Modernize Go code: `task modernize`
+
+### Code Generation / Project Maintenance
+
+- Regenerate config schema: `task schema`
+- Regenerate Hyper embedded provider data: `task hyper`
+- Regenerate SQLC output: `task sqlc`
+- Update key deps and tidy module: `task deps`
+
+### Profiling
+
+When `CRUSH_PROFILE=true`, `main.go` exposes pprof on `localhost:6060`.
+Observed helper tasks:
+
+- `task profile:cpu`
+- `task profile:heap`
+- `task profile:allocs`
+
+## CI and Release Expectations
+
+Observed from `.github/workflows/*.yml` and `.goreleaser.yml`:
+
+- CI build runs on Ubuntu, macOS, and Windows.
+- CI verifies:
+  - `go mod tidy`
+  - clean diff after tidy
+  - `go build -race ./...`
+  - `go test -race -failfast ./...`
+- Lint uses shared Charm workflow with `.golangci.yml`.
+- Security workflows run CodeQL, Grype, `govulncheck`, and dependency review.
+- Schema/hyper artifacts are auto-updated on `main` when config-related files
+  change.
+- Goreleaser builds with:
+  - `CGO_ENABLED=0`
+  - `GOEXPERIMENT=greenteagc`
+- Release packaging generates shell completions and manpages before archiving.
+
+If you touch dependency graphs, schema generation, or embedded provider data,
+expect CI or automation to care.
+
+## Repository Layout
+
+High-level structure observed from the tree and representative files:
+
+```text
+main.go                     CLI entrypoint
+Taskfile.yaml               Main task runner
+crush.json                  Repo-local config for Crush itself
+schema.json                 Generated JSON schema output
+sqlc.yaml                   SQLC configuration
 internal/
-  app/app.go                       Top-level wiring: DB, config, agents, LSP, MCP, events
-  cmd/                             CLI commands (root, run, login, models, stats, sessions)
-  config/
-    config.go                      Config struct, context file paths, agent definitions
-    load.go                        crush.json loading and validation
-    provider.go                    Provider configuration and model resolution
-  agent/
-    agent.go                       SessionAgent: runs LLM conversations per session
-    coordinator.go                 Coordinator: manages named agents ("coder", "task")
-    prompts.go                     Loads Go-template system prompts
-    templates/                     System prompt templates (coder.md.tpl, task.md.tpl, etc.)
-    tools/                         All built-in tools (bash, edit, view, grep, glob, etc.)
-      mcp/                         MCP client integration
-  session/session.go               Session CRUD backed by SQLite
-  message/                         Message model and content types
-  db/                              SQLite via sqlc, with migrations
-    sql/                           Raw SQL queries (consumed by sqlc)
-    migrations/                    Schema migrations
-  lsp/                             LSP client manager, auto-discovery, on-demand startup
-  ui/                              Bubble Tea v2 TUI (see internal/ui/AGENTS.md)
-  permission/                      Tool permission checking and allow-lists
-  skills/                          Skill file discovery and loading
-  shell/                           Bash command execution with background job support
-  event/                           Telemetry (PostHog)
-  pubsub/                          Internal pub/sub for cross-component messaging
-  filetracker/                     Tracks files touched per session
-  history/                         Prompt history
+  app/                      Top-level application wiring and lifecycle
+  agent/                    Agent orchestration, prompts, tools, MCP, providers
+  cmd/                      Cobra commands and subcommands
+  config/                   Config loading, defaults, provider/model resolution
+  db/                       SQLite access, SQLC output, migrations, raw SQL
+  event/                    Telemetry/event plumbing
+  filetracker/              Tracks files read during sessions
+  history/                  Prompt/file history services
+  lsp/                      LSP manager and clients
+  message/                  Message/content models
+  permission/               Tool permission requests and allow-lists
+  projects/                 Project registration/lookup
+  pubsub/                   Internal event broker
+  session/                  Session persistence
+  shell/                    Bash execution and background jobs
+  skills/                   Skill discovery/loading
+  ui/                       Bubble Tea / Ultraviolet TUI
+  update/                   Update checks
 ```
 
-### Key Dependency Roles
+Database-specific layout:
 
-- **`charm.land/fantasy`**: LLM provider abstraction layer. Handles protocol
-  differences between Anthropic, OpenAI, Gemini, etc. Used in `internal/app`
-  and `internal/agent`.
-- **`charm.land/bubbletea/v2`**: TUI framework powering the interactive UI.
-- **`charm.land/lipgloss/v2`**: Terminal styling.
-- **`charm.land/glamour/v2`**: Markdown rendering in the terminal.
-- **`charm.land/catwalk`**: Snapshot/golden-file testing for TUI components.
-- **`sqlc`**: Generates Go code from SQL queries in `internal/db/sql/`.
+- Migrations: `internal/db/migrations/`
+- Raw SQL: `internal/db/sql/`
+- Generated SQLC code: `internal/db/`
 
-### Key Patterns
+Observed migration history includes session/message storage plus later additions
+such as summary message IDs, provider fields, todos, and read-files tracking.
 
-- **Config is a Service**: accessed via `config.Service`, not global state.
-- **Tools are self-documenting**: each tool has a `.go` implementation and a
-  `.md` description file in `internal/agent/tools/`.
-- **System prompts are Go templates**: `internal/agent/templates/*.md.tpl`
-  with runtime data injected.
-- **Context files**: Crush reads AGENTS.md, CRUSH.md, CLAUDE.md, GEMINI.md
-  (and `.local` variants) from the working directory for project-specific
-  instructions.
-- **Persistence**: SQLite + sqlc. All queries live in `internal/db/sql/`,
-  generated code in `internal/db/`. Migrations in `internal/db/migrations/`.
-- **Pub/sub**: `internal/pubsub` for decoupled communication between agent,
-  UI, and services.
-- **CGO disabled**: builds with `CGO_ENABLED=0` and
-  `GOEXPERIMENT=greenteagc`.
+## Architecture Notes
 
-## Build/Test/Lint Commands
+### App Boot Flow
 
-- **Build**: `go build .` or `go run .`
-- **Test**: `task test` or `go test ./...` (run single test:
-  `go test ./internal/llm/prompt -run TestGetContextFromPaths`)
-- **Update Golden Files**: `go test ./... -update` (regenerates `.golden`
-  files when test output changes)
-  - Update specific package:
-    `go test ./internal/tui/components/core -update` (in this case,
-    we're updating "core")
-- **Lint**: `task lint:fix`
-- **Format**: `task fmt` (`gofumpt -w .`)
-- **Modernize**: `task modernize` (runs `modernize` which makes code
-  simplifications)
-- **Dev**: `task dev` (runs with profiling enabled)
+- `main.go` optionally starts pprof when `CRUSH_PROFILE` is set, then calls
+  `cmd.Execute()`.
+- `internal/cmd/root.go` resolves working dir, loads config, creates the app,
+  connects SQLite, registers the project, and launches either TUI or
+  non-interactive flows.
+- `internal/app/app.go` wires together sessions, messages, history,
+  permissions, file tracking, LSP manager, agent coordinator, MCP startup, and
+  update checks.
 
-## Code Style Guidelines
+### Agent Layer
 
-- **Imports**: Use `goimports` formatting, group stdlib, external, internal
-  packages.
-- **Formatting**: Use gofumpt (stricter than gofmt), enabled in
-  golangci-lint.
-- **Naming**: Standard Go conventions — PascalCase for exported, camelCase
-  for unexported.
-- **Types**: Prefer explicit types, use type aliases for clarity (e.g.,
-  `type AgentName string`).
-- **Error handling**: Return errors explicitly, use `fmt.Errorf` for
-  wrapping.
-- **Context**: Always pass `context.Context` as first parameter for
-  operations.
-- **Interfaces**: Define interfaces in consuming packages, keep them small
-  and focused.
-- **Structs**: Use struct embedding for composition, group related fields.
-- **Constants**: Use typed constants with iota for enums, group in const
-  blocks.
-- **Testing**: Use testify's `require` package, parallel tests with
-  `t.Parallel()`, `t.SetEnv()` to set environment variables. Always use
-  `t.Tempdir()` when in need of a temporary directory. This directory does
-  not need to be removed.
-- **JSON tags**: Use snake_case for JSON field names.
-- **File permissions**: Use octal notation (0o755, 0o644) for file
-  permissions.
-- **Log messages**: Log messages must start with a capital letter (e.g.,
-  "Failed to save session" not "failed to save session").
-  - This is enforced by `task lint:log` which runs as part of `task lint`.
-- **Comments**: End comments in periods unless comments are at the end of the
-  line.
+- `internal/agent/agent.go` is the core session-based orchestration layer.
+- Providers are served through `charm.land/fantasy`.
+- The agent attaches MCP server instructions into the system prompt when MCP
+  clients are connected.
+- Sessions queue prompts when already busy.
+- Title generation is triggered for first-message sessions.
+- Tools are configured centrally and injected into agents.
 
-## Testing with Mock Providers
+### Configuration Model
 
-When writing tests that involve provider configurations, use the mock
-providers to avoid API calls:
+Observed from `README.md`, `internal/config/load.go`, and `crush.json`:
 
-```go
-func TestYourFunction(t *testing.T) {
-    // Enable mock providers for testing
-    originalUseMock := config.UseMockProviders
-    config.UseMockProviders = true
-    defer func() {
-        config.UseMockProviders = originalUseMock
-        config.ResetProviders()
-    }()
+- Config precedence documented in the README:
+  1. `.crush.json`
+  2. `crush.json`
+  3. `$HOME/.config/crush/crush.json`
+- Workspace data is also merged from a generated workspace config inside the
+  data directory (`<data-dir>/crush.json`) with highest priority.
+- `config.Load` applies defaults, sets up logging, loads providers, configures
+  selected models, and sets up agents.
+- If the working directory is not inside a git worktree, Crush reduces file-walk
+  depth/item limits.
+- Apple Terminal gets transparent mode enabled automatically.
+- This repo’s `crush.json` configures `gopls` with `gofumpt`, code lenses,
+  staticcheck, semantic tokens, and analysis settings.
 
-    // Reset providers to ensure fresh mock data
-    config.ResetProviders()
+## UI / TUI Guidance
 
-    // Your test code here - providers will now return mock data
-    providers := config.Providers()
-    // ... test logic
-}
-```
+If you touch anything under `internal/ui/`, read `internal/ui/AGENTS.md` first.
+Key points already documented there and confirmed by structure:
 
-## Formatting
+- The top-level UI model is centralized in `internal/ui/model/ui.go`.
+- UI rendering uses a hybrid approach:
+  - Ultraviolet screen-buffer drawing at the top level
+  - string-rendered subcomponents painted onto the screen
+- Subcomponents are generally imperative/stateful helpers, not full nested
+  Bubble Tea models.
+- Keep expensive work out of `Update`; return `tea.Cmd` for side effects.
+- Use `github.com/charmbracelet/x/ansi` for ANSI-aware string handling.
 
-- ALWAYS format any Go code you write.
-  - First, try `gofumpt -w .`.
-  - If `gofumpt` is not available, use `goimports`.
-  - If `goimports` is not available, use `gofmt`.
-  - You can also use `task fmt` to run `gofumpt -w .` on the entire project,
-    as long as `gofumpt` is on the `PATH`.
+Stats-specific note:
 
-## Comments
+- `internal/cmd/stats/AGENTS.md` only specifies one rule: format CSS/HTML/JS
+  with `prettier`.
+- Relevant files are `internal/cmd/stats/index.html`, `index.css`, and
+  `index.js`.
 
-- Comments that live on their own lines should start with capital letters and
-  end with periods. Wrap comments at 78 columns.
+## Testing Patterns
 
-## Committing
+Observed from representative tests and task configuration:
 
-- ALWAYS use semantic commits (`fix:`, `feat:`, `chore:`, `refactor:`,
-  `docs:`, `sec:`, etc).
-- Try to keep commits to one line, not including your attribution. Only use
-  multi-line commits when additional context is truly necessary.
+- The project uses `testing` plus `github.com/stretchr/testify/require` and
+  `assert`.
+- Parallel tests are common (`t.Parallel()`).
+- Temporary directories are used heavily (`t.TempDir()`).
+- Some tests use `testing/synctest` and `go.uber.org/goleak` for concurrency
+  validation.
+- Agent integration tests in `internal/agent/agent_test.go` use
+  `charm.land/x/vcr` recorders and are skipped on Windows in at least one case.
+- Re-recording VCR fixtures is handled by `task test:record`, which removes
+  `internal/agent/testdata` and reruns the agent tests.
 
-## Working on the TUI (UI)
+When changing tests or behavior that affects snapshots/cassettes, check whether
+VCR recordings or golden outputs need regeneration.
 
-Anytime you need to work on the TUI, read `internal/ui/AGENTS.md` before
-starting work.
+## Code Style and Conventions
+
+Observed from `.golangci.yml`, existing code, tests, and current AGENTS content:
+
+### Go Style
+
+- Format Go with `gofumpt` (`task fmt`).
+- Imports are goimports-style grouped.
+- Exported names use PascalCase; unexported names use camelCase.
+- `context.Context` is commonly the first parameter for operations.
+- Errors are wrapped with `fmt.Errorf(... %w ...)`.
+- JSON tags use `snake_case`.
+- File permissions use octal literals such as `0o644` and `0o755`.
+
+### Logging
+
+- Log messages must start with a capital letter.
+- This is explicitly checked by `task lint:log` via
+  `scripts/check_log_capitalization.sh`.
+
+### Comments
+
+- Existing project guidance says standalone comments should start with a capital
+  letter and end with a period.
+
+### Linters Enabled
+
+Observed from `.golangci.yml`:
+
+- `bodyclose`
+- `goprintffuncname`
+- `misspell`
+- `noctx`
+- `nolintlint`
+- `rowserrcheck`
+- `sqlclosecheck`
+- `staticcheck`
+- `tparallel`
+- `whitespace`
+
+Formatters enabled via golangci-lint:
+
+- `gofumpt`
+- `goimports`
+
+## Tooling and Non-Obvious Patterns
+
+### SQLC / Database
+
+- SQLC is configured in `sqlc.yaml` for SQLite.
+- Source-of-truth SQL lives in `internal/db/sql/` and migrations in
+  `internal/db/migrations/`.
+- Generated code is emitted into `internal/db/` with interfaces and prepared
+  queries enabled.
+- If you change SQL or migrations, run `task sqlc`.
+
+### Release Artifacts
+
+Observed from `.goreleaser.yml`:
+
+- Release hooks generate:
+  - bash/zsh/fish completions
+  - gzipped manpages
+- Packaging includes `README*`, `LICENSE*`, `manpages/*`, and `completions/*`.
+- Build metadata injects `internal/version.Version` via ldflags.
+
+### Runtime / Env Details
+
+- `.env` files are auto-loaded in `main.go` via `github.com/joho/godotenv/autoload`.
+- `CRUSH_PROFILE=true` enables pprof.
+- `CRUSH_DISABLE_METRICS` and `DO_NOT_TRACK` are checked when deciding whether
+  to initialize metrics.
+- Root command supports `--cwd`, `--data-dir`, `--debug`, `--yolo`,
+  `--session`, and `--continue`.
+
+### Permissions / File Access
+
+Observed from `internal/agent/tools/view.go`:
+
+- Tool implementations resolve relative paths against the working directory.
+- Access outside the working directory may require a permission request.
+- Skill files are treated specially.
+- The `view` tool records files read and waits briefly for LSP diagnostics after
+  opening files.
+
+## Practical Advice for Future Agents
+
+- Prefer `task` commands when available; they encode the repo’s intended env and
+  flags.
+- After changing Go code, a good default verification path is:
+  1. `task fmt`
+  2. targeted `go test` package(s)
+  3. `task test` if the change is broad
+- If you touch TUI code, read `internal/ui/AGENTS.md` first.
+- If you touch stats frontend assets, run `task fmt:html`.
+- If you touch config schema or Hyper provider generation inputs, run the
+  matching generation task (`task schema`, `task hyper`).
+- If you touch SQL, regenerate SQLC output with `task sqlc`.
+- If CI would run `go mod tidy` for your change, make sure it leaves no diff.
+
+## Observed Gaps / Things Not Present
+
+Only include what is actually in the repo:
+
+- No `Makefile`
+- No root `package.json`
+- No checked-in `.cursor/rules/*.md`
+- No checked-in `.cursorrules`
+- No checked-in `.github/copilot-instructions.md`

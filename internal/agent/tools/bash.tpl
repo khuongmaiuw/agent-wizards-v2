@@ -65,14 +65,14 @@ When user asks to create git commit:
    Commit message here.
 
 {{ if .Attribution.GeneratedWith }}
-   💘 Generated with Crush
+   ✨ Generated with Agent Wizards
 {{ end}}
 {{if eq .Attribution.TrailerStyle "assisted-by" }}
 
-   Assisted-by: {{ .ModelName }} via Crush <crush@charm.land>
+   Assisted-by: {{ .ModelName }} via Agent Wizards <agent-wizards@unicornwizard.com>
 {{ else if eq .Attribution.TrailerStyle "co-authored-by" }}
 
-   Co-Authored-By: Crush <crush@charm.land>
+   Co-Authored-By: Agent Wizards <agent-wizards@unicornwizard.com>
 {{ end }}
 
    EOF

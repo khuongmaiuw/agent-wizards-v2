@@ -61,6 +61,7 @@ type Coordinator interface {
 	// INFO: (kujtim) this is not used yet we will use this when we have multiple agents
 	// SetMainAgent(string)
 	Run(ctx context.Context, sessionID, prompt string, attachments ...message.Attachment) (*fantasy.AgentResult, error)
+	RunPipeline(ctx context.Context, sessionID, prompt string) (*fantasy.AgentResult, error)
 	Cancel(sessionID string)
 	CancelAll()
 	IsSessionBusy(sessionID string) bool
@@ -83,8 +84,10 @@ type coordinator struct {
 	lspManager  *lsp.Manager
 	notify      pubsub.Publisher[notify.Notification]
 
-	currentAgent SessionAgent
-	agents       map[string]SessionAgent
+	currentAgent  SessionAgent
+	researchAgent SessionAgent
+	plannerAgent  SessionAgent
+	agents        map[string]SessionAgent
 
 	readyWg errgroup.Group
 }
@@ -118,17 +121,48 @@ func NewCoordinator(
 	}
 
 	// TODO: make this dynamic when we support multiple agents
-	prompt, err := coderPrompt(prompt.WithWorkingDir(c.cfg.WorkingDir()))
+	coderPrmt, err := coderPrompt(prompt.WithWorkingDir(c.cfg.WorkingDir()))
 	if err != nil {
 		return nil, err
 	}
 
-	agent, err := c.buildAgent(ctx, prompt, agentCfg, false)
+	agent, err := c.buildAgent(ctx, coderPrmt, agentCfg, false)
 	if err != nil {
 		return nil, err
 	}
 	c.currentAgent = agent
 	c.agents[config.AgentCoder] = agent
+
+	// Build research agent
+	researchAgentCfg, ok := cfg.Config().Agents[config.AgentResearch]
+	if ok {
+		rPrompt, err := researchPrompt(prompt.WithWorkingDir(c.cfg.WorkingDir()))
+		if err != nil {
+			return nil, err
+		}
+		rAgent, err := c.buildAgent(ctx, rPrompt, researchAgentCfg, true)
+		if err != nil {
+			return nil, err
+		}
+		c.researchAgent = rAgent
+		c.agents[config.AgentResearch] = rAgent
+	}
+
+	// Build planner agent
+	plannerAgentCfg, ok := cfg.Config().Agents[config.AgentPlanner]
+	if ok {
+		pPrompt, err := plannerPrompt(prompt.WithWorkingDir(c.cfg.WorkingDir()))
+		if err != nil {
+			return nil, err
+		}
+		pAgent, err := c.buildAgent(ctx, pPrompt, plannerAgentCfg, true)
+		if err != nil {
+			return nil, err
+		}
+		c.plannerAgent = pAgent
+		c.agents[config.AgentPlanner] = pAgent
+	}
+
 	return c, nil
 }
 
@@ -210,6 +244,78 @@ func (c *coordinator) Run(ctx context.Context, sessionID string, prompt string, 
 	}
 
 	return result, originalErr
+}
+
+// RunPipeline implements Coordinator. It runs the Research → Plan → Code pipeline.
+func (c *coordinator) RunPipeline(ctx context.Context, sessionID string, userPrompt string) (*fantasy.AgentResult, error) {
+	if err := c.readyWg.Wait(); err != nil {
+		return nil, err
+	}
+	if err := c.UpdateModels(ctx); err != nil {
+		return nil, fmt.Errorf("pipeline: update models: %w", err)
+	}
+
+	model := c.currentAgent.Model()
+	maxTokens := model.CatwalkCfg.DefaultMaxTokens
+	if model.ModelCfg.MaxTokens != 0 {
+		maxTokens = model.ModelCfg.MaxTokens
+	}
+
+	providerCfg, ok := c.cfg.Config().Providers.Get(model.ModelCfg.Provider)
+	if !ok {
+		return nil, errModelProviderNotConfigured
+	}
+	mergedOptions, temp, topP, topK, freqPenalty, presPenalty := mergeCallOptions(model, providerCfg)
+
+	runAgent := func(a SessionAgent, p string) (*fantasy.AgentResult, error) {
+		return a.Run(ctx, SessionAgentCall{
+			SessionID:        sessionID,
+			Prompt:           p,
+			MaxOutputTokens:  maxTokens,
+			ProviderOptions:  mergedOptions,
+			Temperature:      temp,
+			TopP:             topP,
+			TopK:             topK,
+			FrequencyPenalty: freqPenalty,
+			PresencePenalty:  presPenalty,
+			NonInteractive:   true,
+		})
+	}
+
+	// Phase 1: Research
+	researchSummary := ""
+	if c.researchAgent != nil {
+		slog.Info("Pipeline: starting research phase", "session_id", sessionID)
+		researchResult, err := runAgent(c.researchAgent,
+			fmt.Sprintf("Research the codebase for this task and summarize relevant context:\n\n%s", userPrompt))
+		if err != nil {
+			return nil, fmt.Errorf("pipeline research phase: %w", err)
+		}
+		if researchResult != nil {
+			researchSummary = researchResult.Response.Content.Text()
+		}
+		slog.Info("Pipeline: research phase complete")
+	}
+
+	// Phase 2: Plan
+	if c.plannerAgent != nil {
+		slog.Info("Pipeline: starting plan phase", "session_id", sessionID)
+		planPromptText := fmt.Sprintf(
+			"Task:\n%s\n\nResearch context:\n%s\n\nCreate a numbered implementation plan and save it with the todos tool.",
+			userPrompt, researchSummary)
+		_, err := runAgent(c.plannerAgent, planPromptText)
+		if err != nil {
+			return nil, fmt.Errorf("pipeline plan phase: %w", err)
+		}
+		slog.Info("Pipeline: plan phase complete")
+	}
+
+	// Phase 3: Code
+	slog.Info("Pipeline: starting code phase", "session_id", sessionID)
+	coderPromptText := fmt.Sprintf(
+		"Task:\n%s\n\n<research_context>\n%s\n</research_context>\n\nThe plan has been saved to your todos. Work through each step.",
+		userPrompt, researchSummary)
+	return runAgent(c.currentAgent, coderPromptText)
 }
 
 func getProviderOptions(model Model, providerCfg config.ProviderConfig) fantasy.ProviderOptions {

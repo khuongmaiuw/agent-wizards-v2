@@ -1535,6 +1535,13 @@ func (m *UI) handleDialogMsg(msg tea.Msg) tea.Cmd {
 		}
 		cmds = append(cmds, m.sendMessage(content))
 		m.dialog.CloseFrontDialog()
+	case dialog.ActionRunPipeline:
+		if m.isAgentBusy() {
+			cmds = append(cmds, util.ReportWarn("Agent is busy, please wait..."))
+			break
+		}
+		cmds = append(cmds, m.sendPipelineMessage(msg.Content))
+		m.dialog.CloseFrontDialog()
 	case dialog.ActionRunMCPPrompt:
 		if len(msg.Arguments) > 0 && msg.Args == nil {
 			m.dialog.CloseFrontDialog()
@@ -1790,7 +1797,7 @@ func (m *UI) handleKeyPressMsg(msg tea.KeyPressMsg) tea.Cmd {
 				if cmd != nil {
 					cmds = append(cmds, cmd)
 				}
-			case key.Matches(msg, m.keyMap.Editor.Commands) && m.textarea.Value() == "":
+			case key.Matches(msg, m.keyMap.Editor.Commands) && (m.textarea.Value() == "" || msg.String() == "alt+/"):
 				if cmd := m.openCommandsDialog(); cmd != nil {
 					cmds = append(cmds, cmd)
 				}
@@ -2888,11 +2895,47 @@ func (m *UI) sendMessage(content string, attachments ...message.Attachment) tea.
 
 const cancelTimerDuration = 2 * time.Second
 
-// cancelTimerCmd creates a command that expires the cancel timer.
 func cancelTimerCmd() tea.Cmd {
 	return tea.Tick(cancelTimerDuration, func(time.Time) tea.Msg {
 		return cancelTimerExpiredMsg{}
 	})
+}// sendPipelineMessage runs the research→plan→code pipeline for the given content.
+func (m *UI) sendPipelineMessage(content string) tea.Cmd {
+	if m.com.App.AgentCoordinator == nil {
+		return util.ReportError(fmt.Errorf("coder agent is not initialized"))
+	}
+
+	var cmds []tea.Cmd
+	if !m.hasSession() {
+		newSession, err := m.com.App.Sessions.Create(context.Background(), "New Session")
+		if err != nil {
+			return util.ReportError(err)
+		}
+		if m.forceCompactMode {
+			m.isCompact = true
+		}
+		if newSession.ID != "" {
+			m.session = &newSession
+			cmds = append(cmds, m.loadSession(newSession.ID))
+		}
+		m.setState(uiChat, m.focus)
+	}
+
+	sessionID := m.session.ID
+	cmds = append(cmds, func() tea.Msg {
+		_, err := m.com.App.AgentCoordinator.RunPipeline(context.Background(), sessionID, content)
+		if err != nil {
+			if errors.Is(err, context.Canceled) || errors.Is(err, permission.ErrorPermissionDenied) {
+				return nil
+			}
+			return util.InfoMsg{
+				Type: util.InfoTypeError,
+				Msg:  err.Error(),
+			}
+		}
+		return nil
+	})
+	return tea.Batch(cmds...)
 }
 
 // cancelAgent handles the cancel key press. The first press sets isCanceling to true
@@ -2999,7 +3042,12 @@ func (m *UI) openModelsDialog() tea.Cmd {
 // openCommandsDialog opens the commands dialog.
 func (m *UI) openCommandsDialog() tea.Cmd {
 	if m.dialog.ContainsDialog(dialog.CommandsID) {
-		// Bring to front
+		// Bring to front and refresh textarea content.
+		if dia := m.dialog.Dialog(dialog.CommandsID); dia != nil {
+			if cmds, ok := dia.(*dialog.Commands); ok {
+				cmds.SetTextareaContent(m.textarea.Value())
+			}
+		}
 		m.dialog.BringToFront(dialog.CommandsID)
 		return nil
 	}
@@ -3012,7 +3060,7 @@ func (m *UI) openCommandsDialog() tea.Cmd {
 	hasTodos := hasSession && hasIncompleteTodos(m.session.Todos)
 	hasQueue := m.promptQueue > 0
 
-	commands, err := dialog.NewCommands(m.com, sessionID, hasSession, hasTodos, hasQueue, m.customCommands, m.mcpPrompts)
+	commands, err := dialog.NewCommands(m.com, sessionID, hasSession, hasTodos, hasQueue, m.customCommands, m.mcpPrompts, m.textarea.Value())
 	if err != nil {
 		return util.ReportError(err)
 	}

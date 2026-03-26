@@ -59,6 +59,8 @@ type Commands struct {
 	hasQueue   bool
 	selected   CommandType
 
+	textareaContent string
+
 	spinner spinner.Model
 	loading bool
 
@@ -78,16 +80,17 @@ type Commands struct {
 var _ Dialog = (*Commands)(nil)
 
 // NewCommands creates a new commands dialog.
-func NewCommands(com *common.Common, sessionID string, hasSession, hasTodos, hasQueue bool, customCommands []commands.CustomCommand, mcpPrompts []commands.MCPPrompt) (*Commands, error) {
+func NewCommands(com *common.Common, sessionID string, hasSession, hasTodos, hasQueue bool, customCommands []commands.CustomCommand, mcpPrompts []commands.MCPPrompt, textareaContent string) (*Commands, error) {
 	c := &Commands{
-		com:            com,
-		selected:       SystemCommands,
-		sessionID:      sessionID,
-		hasSession:     hasSession,
-		hasTodos:       hasTodos,
-		hasQueue:       hasQueue,
-		customCommands: customCommands,
-		mcpPrompts:     mcpPrompts,
+		com:             com,
+		selected:        SystemCommands,
+		sessionID:       sessionID,
+		hasSession:      hasSession,
+		hasTodos:        hasTodos,
+		hasQueue:        hasQueue,
+		customCommands:  customCommands,
+		mcpPrompts:      mcpPrompts,
+		textareaContent: textareaContent,
 	}
 
 	help := help.New()
@@ -516,6 +519,9 @@ func (c *Commands) defaultCommands() []*CommandItem {
 		NewCommandItem(c.com.Styles, "init", "Initialize Project", "", ActionInitializeProject{}),
 	)
 
+	// Add pipeline command.
+	commands = append(commands, NewCommandItem(c.com.Styles, "run_pipeline", "Run with Plan (Research → Plan → Code)", "", ActionRunPipeline{Content: c.textareaContent}))
+
 	// Add transparent background toggle.
 	transparentLabel := "Disable Background Color"
 	if cfg != nil && cfg.Options != nil && cfg.Options.TUI.Transparent != nil && *cfg.Options.TUI.Transparent {
@@ -558,4 +564,13 @@ func (a *Commands) StartLoading() tea.Cmd {
 // StopLoading implements [LoadingDialog].
 func (a *Commands) StopLoading() {
 	a.loading = false
+}
+
+// SetTextareaContent updates the textarea content used for the pipeline action.
+// Call this before bringing the dialog to front so the action has fresh content.
+func (c *Commands) SetTextareaContent(content string) {
+	c.textareaContent = content
+	if c.selected == SystemCommands {
+		c.setCommandItems(c.selected)
+	}
 }

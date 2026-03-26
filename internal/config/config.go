@@ -22,8 +22,8 @@ import (
 )
 
 const (
-	appName              = "crush"
-	defaultDataDirectory = ".crush"
+	appName              = "agent-wizards"
+	defaultDataDirectory = ".agent-wizards"
 	defaultInitializeAs  = "AGENTS.md"
 )
 
@@ -41,6 +41,9 @@ var defaultContextPaths = []string{
 	"Crush.local.md",
 	"CRUSH.md",
 	"CRUSH.local.md",
+	"agent-wizards.md",
+	"agent-wizards.local.md",
+	"AGENT-WIZARDS.md",
 	"AGENTS.md",
 	"agents.md",
 	"Agents.md",
@@ -59,8 +62,10 @@ const (
 )
 
 const (
-	AgentCoder string = "coder"
-	AgentTask  string = "task"
+	AgentCoder    string = "coder"
+	AgentTask     string = "task"
+	AgentResearch string = "research"
+	AgentPlanner  string = "planner"
 )
 
 type SelectedModel struct {
@@ -532,6 +537,26 @@ func (c *Config) SetupAgents() {
 			AllowedTools: resolveReadOnlyTools(allowedTools),
 			// NO MCPs or LSPs by default
 			AllowedMCP: map[string][]string{},
+		},
+
+		AgentResearch: {
+			ID:           AgentResearch,
+			Name:         "Research",
+			Description:  "Reads codebase context relevant to a task.",
+			Model:        SelectedModelTypeLarge,
+			ContextPaths: c.Options.ContextPaths,
+			AllowedTools: filterSlice(allowedTools, []string{"glob", "grep", "ls", "view", "fetch", "sourcegraph"}, true),
+			AllowedMCP:   map[string][]string{},
+		},
+
+		AgentPlanner: {
+			ID:           AgentPlanner,
+			Name:         "Planner",
+			Description:  "Produces a structured implementation plan from research.",
+			Model:        SelectedModelTypeLarge,
+			ContextPaths: c.Options.ContextPaths,
+			AllowedTools: filterSlice(allowedTools, []string{"glob", "grep", "ls", "view", "todos"}, true),
+			AllowedMCP:   map[string][]string{},
 		},
 	}
 	c.Agents = agents

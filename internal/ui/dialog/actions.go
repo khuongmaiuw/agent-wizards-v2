@@ -72,6 +72,10 @@ type (
 		Arguments []commands.Argument
 		Args      map[string]string // Actual argument values
 	}
+	// ActionRunPipeline is a message to run the research+plan+code pipeline.
+	ActionRunPipeline struct {
+		Content string
+	}
 	// ActionRunMCPPrompt is a message to run a custom command.
 	ActionRunMCPPrompt struct {
 		Title       string

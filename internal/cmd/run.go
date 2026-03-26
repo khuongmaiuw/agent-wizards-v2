@@ -53,6 +53,7 @@ crush run --continue "Follow up on your last response"
 			smallModel, _ = cmd.Flags().GetString("small-model")
 			sessionID, _  = cmd.Flags().GetString("session")
 			useLast, _    = cmd.Flags().GetBool("continue")
+			usePipeline, _ = cmd.Flags().GetBool("plan")
 		)
 
 		// Cancel on SIGINT or SIGTERM.
@@ -103,6 +104,9 @@ crush run --continue "Follow up on your last response"
 			event.SetContinueLastSession(true)
 		}
 
+		if usePipeline {
+			return app.RunPipelineNonInteractive(ctx, os.Stdout, prompt, largeModel, smallModel, quiet || verbose, sessionID, useLast)
+		}
 		return app.RunNonInteractive(ctx, os.Stdout, prompt, largeModel, smallModel, quiet || verbose, sessionID, useLast)
 	},
 }
@@ -114,5 +118,6 @@ func init() {
 	runCmd.Flags().String("small-model", "", "Small model to use. If not provided, uses the default small model for the provider")
 	runCmd.Flags().StringP("session", "s", "", "Continue a previous session by ID")
 	runCmd.Flags().BoolP("continue", "C", false, "Continue the most recent session")
+	runCmd.Flags().Bool("plan", false, "Run with research+plan pipeline before coding")
 	runCmd.MarkFlagsMutuallyExclusive("session", "continue")
 }
